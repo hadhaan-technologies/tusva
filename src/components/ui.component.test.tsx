@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { Button, Input } from './ui'
 import SignupOtpForm from './SignupOtpForm'
+import PasswordInput from './PasswordInput'
 
 describe('shared UI components', () => {
   it('fires button actions and respects disabled state', () => {
@@ -18,6 +19,16 @@ describe('shared UI components', () => {
     fireEvent.change(input, { target: { value: 'student@jainuniversity.ac.in' } })
     expect(input.value).toBe('student@jainuniversity.ac.in')
     expect(input.required).toBe(true)
+  })
+
+  it('shows and hides a password with an accessible toggle', () => {
+    render(<><label htmlFor="password">Password</label><PasswordInput id="password" autoComplete="current-password" /></>)
+    const password = screen.getByLabelText('Password') as HTMLInputElement
+    expect(password.type).toBe('password')
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(password.type).toBe('text')
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }))
+    expect(password.type).toBe('password')
   })
 
   it('accepts a six digit signup OTP and invokes the verify action', () => {

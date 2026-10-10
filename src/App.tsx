@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { ArrowRight, BookOpenCheck, CalendarDays, Check, ChevronRight, CircleHelp, Clock3, GraduationCap, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { supabase } from './lib/supabase'
@@ -7,13 +7,14 @@ import Workspace from './components/Workspace'
 import DemoWorkspace from './components/DemoWorkspace'
 import BrandLogo from './components/BrandLogo'
 import SignupOtpForm from './components/SignupOtpForm'
+import PasswordInput from './components/PasswordInput'
 import { institutionEmailError, isInstitutionEmail } from './lib/institution-email'
 import { Badge, Button, Card, CardDescription, CardHeader, CardTitle, Input } from './components/ui'
 import './styles.css'
 import './clean.css'
 
 type Page = 'home' | 'auth' | 'demo'
-type AuthMode = 'signin' | 'signup' | 'demo' | 'reset' | 'verify'
+type AuthMode = 'signin' | 'signup' | 'demo' | 'reset' | 'verify' | 'new-password'
 const profileColumns = 'id,role,full_name,institutional_email,active,usn,branch_id,semester,academic_year,signup_activation_pending'
 
 async function loadProfileWithVerifiedSignupActivation(client: NonNullable<typeof supabase>, userId: string) {
@@ -48,11 +49,20 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [demoProfile, setDemoProfile] = useState<Profile>(demoPeople.student)
   const [verificationEmail, setVerificationEmail] = useState('')
+  const passwordRecoveryInProgress = useRef(false)
 
   useEffect(() => {
     const client = supabase
     if (!client) return
     let live = true
+    const isRecoveryLink = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('type') === 'recovery'
+      || new URLSearchParams(window.location.search).get('type') === 'recovery'
+    if (isRecoveryLink) {
+      passwordRecoveryInProgress.current = true
+      setPage('auth')
+      setAuthMode('new-password')
+      setCheckingSession(false)
+    }
     const loadProfile = async (userId: string | null) => {
       if (!userId) { if (live) { setProfile(null); setCheckingSession(false) }; return }
       const { data, error: profileError } = await loadProfileWithVerifiedSignupActivation(client, userId)
@@ -70,8 +80,18 @@ export default function App() {
       }
       setCheckingSession(false)
     }
-    void client.auth.getUser().then(({ data }) => loadProfile(data.user?.id ?? null))
-    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+    void client.auth.getUser().then(({ data }) => {
+      if (!passwordRecoveryInProgress.current) void loadProfile(data.user?.id ?? null)
+    })
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        passwordRecoveryInProgress.current = true
+        setPage('auth')
+        setAuthMode('new-password')
+        setCheckingSession(false)
+        return
+      }
+      if (passwordRecoveryInProgress.current) return
       window.setTimeout(() => { void loadProfile(session?.user.id ?? null) }, 0)
     })
     return () => { live = false; subscription.unsubscribe() }
@@ -162,6 +182,26 @@ export default function App() {
     setBusy(false)
   }
 
+  const updatePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!supabase) return
+    const form = new FormData(event.currentTarget)
+    const password = String(form.get('newPassword') ?? '')
+    const confirmation = String(form.get('confirmPassword') ?? '')
+    if (password.length < 8) { setError('Choose a password with at least 8 characters.'); return }
+    if (password !== confirmation) { setError('The passwords do not match.'); return }
+    setBusy(true); setError(''); setNotice('')
+    const { error: updateError } = await supabase.auth.updateUser({ password })
+    if (updateError) setError(updateError.message)
+    else {
+      await supabase.auth.signOut()
+      setPage('auth'); setAuthMode('signin'); setNotice('Your password has been reset. Sign in with your new password.'); setError('')
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+      passwordRecoveryInProgress.current = false
+    }
+    setBusy(false)
+  }
+
   const startDemo = (role: Role, localProfile?: Profile) => {
     if (!import.meta.env.DEV) return
     setDemoProfile(localProfile ?? demoPeople[role])
@@ -176,7 +216,7 @@ export default function App() {
   if (checkingSession) return <main className="loading-screen"><BrandLogo className="brand-mark"/><span>Loading your secure workspace</span></main>
   if (profile) return <Workspace profile={profile} onSignOut={signOut} />
   if (page === 'demo' && import.meta.env.DEV) return <DemoWorkspace profile={demoProfile} onSignOut={signOut} />
-  if (page === 'auth') return <AuthScreen mode={authMode} setMode={setAuthMode} onHome={() => { setPage('home'); setError(''); setNotice('') }} onSignIn={signIn} onSignUp={signUp} onVerifyOtp={verifySignupOtp} onResendOtp={resendSignupOtp} verificationEmail={verificationEmail} onDemo={startDemo} onReset={resetPassword} error={error} notice={notice} busy={busy} />
+  if (page === 'auth') return <AuthScreen mode={authMode} setMode={setAuthMode} onHome={() => { setPage('home'); setError(''); setNotice('') }} onSignIn={signIn} onSignUp={signUp} onVerifyOtp={verifySignupOtp} onResendOtp={resendSignupOtp} verificationEmail={verificationEmail} onDemo={startDemo} onReset={resetPassword} onUpdatePassword={updatePassword} error={error} notice={notice} busy={busy} />
   return <Landing onSignIn={() => { setAuthMode('signin'); setPage('auth') }} onSignUp={() => { setAuthMode('signup'); setPage('auth') }} onDemo={() => setAuthModeAndPage(setAuthMode, setPage)} />
 }
 
@@ -203,8 +243,8 @@ function Feature({ icon, title, description }: { icon: ReactNode; title: string;
   return <Card className="feature-card"><span className="feature-icon">{icon}</span><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></Card>
 }
 
-function AuthScreen({ mode, setMode, onHome, onSignIn, onSignUp, onVerifyOtp, onResendOtp, verificationEmail, onDemo, onReset, error, notice, busy }: {
-  mode: AuthMode; setMode: (mode: AuthMode) => void; onHome: () => void; onSignIn: (event: FormEvent<HTMLFormElement>) => void; onSignUp: (event: FormEvent<HTMLFormElement>) => void; onVerifyOtp: (token: string) => void; onResendOtp: () => void; verificationEmail: string; onDemo: (role: Role, profile?: Profile) => void; onReset: (email: string) => void; error: string; notice: string; busy: boolean
+function AuthScreen({ mode, setMode, onHome, onSignIn, onSignUp, onVerifyOtp, onResendOtp, verificationEmail, onDemo, onReset, onUpdatePassword, error, notice, busy }: {
+  mode: AuthMode; setMode: (mode: AuthMode) => void; onHome: () => void; onSignIn: (event: FormEvent<HTMLFormElement>) => void; onSignUp: (event: FormEvent<HTMLFormElement>) => void; onVerifyOtp: (token: string) => void; onResendOtp: () => void; verificationEmail: string; onDemo: (role: Role, profile?: Profile) => void; onReset: (email: string) => void; onUpdatePassword: (event: FormEvent<HTMLFormElement>) => void; error: string; notice: string; busy: boolean
 }) {
   const [demoName, setDemoName] = useState('')
   const [demoEmail, setDemoEmail] = useState('')
@@ -216,12 +256,13 @@ function AuthScreen({ mode, setMode, onHome, onSignIn, onSignUp, onVerifyOtp, on
     try { window.localStorage.setItem('tusva-demo-profile', JSON.stringify(local)) } catch { /* demo still works for this visit */ }
     onDemo('student', local)
   }
-  return <main className="auth-page"><header className="auth-header"><button className="brand-home" onClick={onHome}><Brand/></button><div><span>Need help?</span><CircleHelp size={16}/></div></header><div className="auth-layout"><aside className="auth-aside"><Badge className="hero-tag"><span/> TUSVA COLLEGE</Badge><h1>Your college’s<br/>examination<br/><span>workspace.</span></h1><p>Sign in to access scheduled assessments, course results and institutional tools.</p><div className="auth-aside-detail"><ShieldCheck size={17}/><span><b>Private to your institution</b><small>University email OTP verification for student accounts.</small></span></div><div className="auth-aside-footer">TUSVA College · Examination services · Product by <a href="https://www.hadhaan.com" target="_blank" rel="noreferrer">Hadhaan Technologies</a></div></aside>
-    <section className="auth-panel"><div className="auth-card-wrap">{!['reset','verify'].includes(mode)&&<div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode==='signin'} className={mode==='signin'?'active':''} onClick={()=>setMode('signin')}>Sign in</button><button role="tab" aria-selected={mode==='signup'} className={mode==='signup'?'active':''} onClick={()=>setMode('signup')}>Create an account</button>{import.meta.env.DEV&&<button role="tab" aria-selected={mode==='demo'} className={mode==='demo'?'active':''} onClick={()=>setMode('demo')}>Explore demo</button>}</div>}
+  return <main className="auth-page"><header className="auth-header"><button className="brand-home" onClick={onHome}><Brand/></button><div><span>Need help?</span><CircleHelp size={16}/></div></header><div className="auth-layout"><aside className="auth-aside"><Badge className="hero-tag"><span/> TUSVA COLLEGE</Badge><h1>Your college’s<br/>examination<br/><span>workspace.</span></h1><p>Sign in to access scheduled assessments, course results and institutional tools.</p><div className="auth-aside-detail"><ShieldCheck size={17}/><span><b>Private to your institution</b><small>University email verification for student accounts.</small></span></div><div className="auth-aside-footer">TUSVA College · Examination services · Product by <a href="https://www.hadhaan.com" target="_blank" rel="noreferrer">Hadhaan Technologies</a></div></aside>
+    <section className="auth-panel"><div className="auth-card-wrap">{!['reset','verify','new-password'].includes(mode)&&<div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode==='signin'} className={mode==='signin'?'active':''} onClick={()=>setMode('signin')}>Sign in</button><button role="tab" aria-selected={mode==='signup'} className={mode==='signup'?'active':''} onClick={()=>setMode('signup')}>Create an account</button>{import.meta.env.DEV&&<button role="tab" aria-selected={mode==='demo'} className={mode==='demo'?'active':''} onClick={()=>setMode('demo')}>Explore demo</button>}</div>}
       {mode==='verify'&&<SignupOtpForm email={verificationEmail} busy={busy} error={error} notice={notice} onVerify={onVerifyOtp} onResend={onResendOtp} onBack={()=>setMode('signup')}/>}
       {mode==='reset'&&<><CardHeader className="auth-heading"><CardTitle>Reset your password</CardTitle><CardDescription>We’ll email a secure reset link to your university address.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);onReset(String(data.get('resetEmail')??'').trim().toLowerCase())}}><label htmlFor="reset-email">University email</label><Input id="reset-email" name="resetEmail" type="email" placeholder="name@jainuniversity.ac.in" pattern=".+@jainuniversity\.ac\.in" autoComplete="email" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Sending…':'Send reset link'} <ArrowRight size={16}/></Button></form><button className="auth-back-link" onClick={()=>setMode('signin')}>← Back to sign in</button></>}
-      {mode==='signin'&&<><CardHeader className="auth-heading"><CardTitle>Welcome back</CardTitle><CardDescription>Sign in with your institutional account to continue.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form" onSubmit={onSignIn}><label htmlFor="login-email">University email</label><Input id="login-email" name="email" type="email" placeholder="name@jainuniversity.ac.in" pattern=".+@jainuniversity\.ac\.in" autoComplete="username" required disabled={!supabase||busy}/><div className="password-label"><label htmlFor="login-password">Password</label><button type="button" onClick={()=>setMode('reset')} disabled={!supabase}>Forgot password?</button></div><Input id="login-password" name="password" type="password" placeholder="Enter your password" autoComplete="current-password" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Signing in…':'Sign in'} <ArrowRight size={16}/></Button></form><div className="auth-footnote"><LockKeyhole size={14}/> Protected by your institution’s sign-in</div></>}
-      {mode==='signup'&&<><CardHeader className="auth-heading"><CardTitle>Create a student account</CardTitle><CardDescription>Verify your Jain University email with a one-time code. No manual approval is required.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form signup-form" onSubmit={onSignUp}><label htmlFor="signup-name">Full name</label><Input id="signup-name" name="fullName" placeholder="Your name as it appears in college records" autoComplete="name" required disabled={!supabase||busy}/><label htmlFor="signup-email">University email</label><Input id="signup-email" name="email" type="email" placeholder="name@jainuniversity.ac.in" pattern=".+@jainuniversity\.ac\.in" autoComplete="email" required disabled={!supabase||busy}/><div className="form-two-col"><div><label htmlFor="signup-usn">USN</label><Input id="signup-usn" name="usn" placeholder="4GH26CS001" required disabled={!supabase||busy}/></div><div><label htmlFor="signup-branch">Branch code (if known)</label><Input id="signup-branch" name="branchCode" placeholder="e.g. CSE" disabled={!supabase||busy}/></div></div><div className="form-two-col"><div><label htmlFor="signup-semester">Semester</label><select id="signup-semester" name="semester" className="ui-input" defaultValue="" required disabled={!supabase||busy}><option value="" disabled>Select</option>{Array.from({length:8},(_,i)=><option key={i+1} value={i+1}>{i+1}{['st','nd','rd'][i]??'th'}</option>)}</select></div><div><label htmlFor="signup-year">Academic year</label><Input id="signup-year" name="academicYear" placeholder="2026–27" required disabled={!supabase||busy}/></div></div><label htmlFor="signup-password">Create a password</label><Input id="signup-password" name="password" type="password" placeholder="At least 8 characters" minLength={8} autoComplete="new-password" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Sending code…':'Create account' } <ArrowRight size={16}/></Button></form><p className="auth-smallprint">The code confirms access to the university email address, not the claimed name or USN. A branch can be assigned later.</p></>}
+      {mode==='new-password'&&<><CardHeader className="auth-heading"><CardTitle>Choose a new password</CardTitle><CardDescription>Enter and confirm a new password for your TUSVA account.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form" onSubmit={onUpdatePassword}><label htmlFor="new-password">New password</label><PasswordInput id="new-password" name="newPassword" placeholder="At least 8 characters" minLength={8} autoComplete="new-password" required disabled={!supabase||busy}/><label htmlFor="confirm-password">Confirm new password</label><PasswordInput id="confirm-password" name="confirmPassword" placeholder="Enter the new password again" minLength={8} autoComplete="new-password" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Saving…':'Save new password'} <ArrowRight size={16}/></Button></form><button className="auth-back-link" type="button" onClick={()=>setMode('signin')}>← Back to sign in</button></>}
+      {mode==='signin'&&<><CardHeader className="auth-heading"><CardTitle>Welcome back</CardTitle><CardDescription>Sign in with your institutional account to continue.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form" onSubmit={onSignIn}><label htmlFor="login-email">University email</label><Input id="login-email" name="email" type="email" placeholder="name@jainuniversity.ac.in" pattern=".+@jainuniversity\.ac\.in" autoComplete="username" required disabled={!supabase||busy}/><div className="password-label"><label htmlFor="login-password">Password</label><button type="button" onClick={()=>setMode('reset')} disabled={!supabase}>Forgot password?</button></div><PasswordInput id="login-password" name="password" placeholder="Enter your password" autoComplete="current-password" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Signing in…':'Sign in'} <ArrowRight size={16}/></Button></form><div className="auth-footnote"><LockKeyhole size={14}/> Protected by your institution’s sign-in</div></>}
+      {mode==='signup'&&<><CardHeader className="auth-heading"><CardTitle>Create a student account</CardTitle><CardDescription>Verify your Jain University email to activate your student account. No manual approval is required.</CardDescription></CardHeader>{error&&<div className="form-alert error" role="alert">{error}</div>}{notice&&<div className="form-alert success" role="status"><Check size={16}/>{notice}</div>}<form className="auth-form signup-form" onSubmit={onSignUp}><label htmlFor="signup-name">Full name</label><Input id="signup-name" name="fullName" placeholder="Your name as it appears in college records" autoComplete="name" required disabled={!supabase||busy}/><label htmlFor="signup-email">University email</label><Input id="signup-email" name="email" type="email" placeholder="name@jainuniversity.ac.in" pattern=".+@jainuniversity\.ac\.in" autoComplete="email" required disabled={!supabase||busy}/><div className="form-two-col"><div><label htmlFor="signup-usn">USN</label><Input id="signup-usn" name="usn" placeholder="4GH26CS001" required disabled={!supabase||busy}/></div><div><label htmlFor="signup-branch">Branch code (if known)</label><Input id="signup-branch" name="branchCode" placeholder="e.g. CSE" disabled={!supabase||busy}/></div></div><div className="form-two-col"><div><label htmlFor="signup-semester">Semester</label><select id="signup-semester" name="semester" className="ui-input" defaultValue="" required disabled={!supabase||busy}><option value="" disabled>Select</option>{Array.from({length:8},(_,i)=><option key={i+1} value={i+1}>{i+1}{['st','nd','rd'][i]??'th'}</option>)}</select></div><div><label htmlFor="signup-year">Academic year</label><Input id="signup-year" name="academicYear" placeholder="2026–27" required disabled={!supabase||busy}/></div></div><label htmlFor="signup-password">Create a password</label><PasswordInput id="signup-password" name="password" placeholder="At least 8 characters" minLength={8} autoComplete="new-password" required disabled={!supabase||busy}/><Button type="submit" className="auth-submit" disabled={!supabase||busy}>{busy?'Creating account…':'Create account' } <ArrowRight size={16}/></Button></form><p className="auth-smallprint">Email verification confirms access to the university address, not the claimed name or USN. A branch can be assigned later.</p></>}
       {mode==='demo'&&import.meta.env.DEV&&<><CardHeader className="auth-heading"><CardTitle>Explore the demo</CardTitle><CardDescription>Choose a role to preview its dashboard. Demo data stays in this browser.</CardDescription></CardHeader><div className="demo-role-list">{(['student','faculty','admin'] as const).map((role)=><button className="demo-role-card" key={role} onClick={()=>onDemo(role)}><span className={`demo-role-icon ${role}`}>{role==='student'?<GraduationCap size={19}/>:role==='faculty'?<BookOpenCheck size={18}/>:<ShieldCheck size={18}/>}</span><span><b>{demoPeople[role].full_name}</b><small>{role==='admin'?'Administrator workspace':role==='faculty'?'Faculty workspace':'Student workspace'}</small></span><ChevronRight size={17}/></button>)}</div><div className="demo-divider"><span/> OR CREATE A LOCAL STUDENT <span/></div>{demoError&&<div className="form-alert error">{demoError}</div>}<form className="auth-form local-demo-form" onSubmit={createLocalDemo}><label htmlFor="demo-name">Your name</label><Input id="demo-name" value={demoName} onChange={e=>setDemoName(e.target.value)} placeholder="e.g. Sam Patel" required/><label htmlFor="demo-email">University email for the demo profile</label><Input id="demo-email" type="email" pattern=".+@jainuniversity\.ac\.in" placeholder="name@jainuniversity.ac.in" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} required/><Button variant="outline" type="submit" className="auth-submit">Create demo student <ArrowRight size={16}/></Button></form><p className="auth-smallprint">Demo accounts do not sign in to Supabase or create institutional records.</p></>}
       <button className="auth-back-link" onClick={onHome}>← Back to TUSVA</button>
     </div></section></div></main>
