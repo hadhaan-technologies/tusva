@@ -14,6 +14,24 @@ import './clean.css'
 
 type Page = 'home' | 'auth' | 'demo'
 type AuthMode = 'signin' | 'signup' | 'demo' | 'reset' | 'verify'
+const profileColumns = 'id,role,full_name,institutional_email,active,usn,branch_id,semester,academic_year,signup_activation_pending'
+
+async function loadProfileWithVerifiedSignupActivation(client: NonNullable<typeof supabase>, userId: string) {
+  const load = () => client.from('profiles').select(profileColumns).eq('id', userId).maybeSingle()
+  let result = await load()
+  if (!result.error && result.data && !result.data.active && result.data.signup_activation_pending) {
+    const { data: { user } } = await client.auth.getUser()
+    if (user?.id === userId && user.email_confirmed_at) {
+      const { data: activation, error: activationError } = await client.functions.invoke('complete-signup')
+      if (activationError || activation?.error) {
+        return { ...result, error: activationError ?? new Error(activation?.error ?? 'Your verified account could not be activated.') }
+      }
+      result = await load()
+    }
+  }
+  return result
+}
+
 const demoPeople: Record<Role, Profile> = import.meta.env.DEV ? {
   student: { id: 'demo-student', role: 'student', full_name: 'Ananya Rao', institutional_email: 'ananya.rao@jainuniversity.ac.in', active: true, usn: '4GH22CS042', semester: 6, academic_year: '2026–27' },
   faculty: { id: 'demo-faculty', role: 'faculty', full_name: 'Dr. Meera Nair', institutional_email: 'meera.nair@jainuniversity.ac.in', active: true },
@@ -37,7 +55,7 @@ export default function App() {
     let live = true
     const loadProfile = async (userId: string | null) => {
       if (!userId) { if (live) { setProfile(null); setCheckingSession(false) }; return }
-      const { data, error: profileError } = await client.from('profiles').select('id,role,full_name,institutional_email,active,usn,branch_id,semester,academic_year').eq('id', userId).maybeSingle()
+      const { data, error: profileError } = await loadProfileWithVerifiedSignupActivation(client, userId)
       if (!live) return
       if (profileError || !data || !data.active) {
         await client.auth.signOut()
@@ -69,7 +87,7 @@ export default function App() {
     if (!isInstitutionEmail(email)) { setError(institutionEmailError); setBusy(false); return }
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
     if (signInError || !data.user) { setError(signInError?.message ?? 'We could not sign you in. Check your details and try again.'); setBusy(false); return }
-    const { data: account, error: accountError } = await supabase.from('profiles').select('id,role,full_name,institutional_email,active,usn,branch_id,semester,academic_year').eq('id', data.user.id).maybeSingle()
+    const { data: account, error: accountError } = await loadProfileWithVerifiedSignupActivation(supabase, data.user.id)
     if (accountError || !account || !account.active) {
       await supabase.auth.signOut()
       setError(account && !account.active ? 'This account is inactive. Verify your university email or contact TUSVA support.' : 'This account is not set up for TUSVA yet. Contact TUSVA support.')
@@ -115,7 +133,7 @@ export default function App() {
         await supabase.auth.signOut()
         setError(activation?.error ?? activationError?.message ?? 'Your email is verified, but the account could not be activated. Please try again.')
       } else {
-        const { data: account, error: accountError } = await supabase.from('profiles').select('id,role,full_name,institutional_email,active,usn,branch_id,semester,academic_year').eq('id', verification.user.id).maybeSingle()
+        const { data: account, error: accountError } = await loadProfileWithVerifiedSignupActivation(supabase, verification.user.id)
         if (accountError || !account?.active) {
           await supabase.auth.signOut()
           setError('Your email is verified, but the account is still inactive. Please try again.')

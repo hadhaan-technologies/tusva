@@ -16,5 +16,6 @@ export default function SignupOtpForm({ email, busy, error, notice, onVerify, on
       <Button type="submit" className="auth-submit" disabled={busy || token.length !== 6}>{busy ? 'Verifying…' : 'Verify email'} <ArrowRight size={16}/></Button>
     </form>
     <div className="otp-actions"><button className="auth-back-link" type="button" onClick={onResend} disabled={busy}>Resend code <RotateCw size={14}/></button><button className="auth-back-link" type="button" onClick={onBack}>Use a different email</button></div>
+    <p className="auth-smallprint">If your email contains a confirmation link instead, open it in this browser to complete verification. Six digit codes are controlled by the institution’s Supabase email template.</p>
   </section>
 }
