@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4'
 import { canSeeResult, computeDeadline, gradeObjective, isTerminal, validateAnswer } from '../_shared/exam-domain.ts'
 
-const corsHeaders = { 'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
+const corsHeaders = { 'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const respond = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 type AnyRow = Record<string, any>
 const shuffle = <T,>(values: T[]) => { const a = [...values]; for (let i=a.length-1;i>0;i--) { const j=crypto.getRandomValues(new Uint32Array(1))[0] % (i+1); [a[i],a[j]]=[a[j],a[i]] } return a }

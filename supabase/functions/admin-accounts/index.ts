@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4'
-const cors={ 'Access-Control-Allow-Origin':Deno.env.get('APP_ORIGIN')??'*','Access-Control-Allow-Headers':'authorization, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS' }
+const cors={ 'Access-Control-Allow-Origin':Deno.env.get('APP_ORIGIN')??'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Access-Control-Allow-Methods':'POST, OPTIONS' }
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}})
 type AccountInput={fullName:string;email:string;role:'student'|'faculty'|'admin';usn?:string;branchId?:string;semester?:number;academicYear?:string;courseIds?:string[]}
 function validate(row:any):string|null {
@@ -63,8 +63,15 @@ Deno.serve(async(request)=>{
   const results=[]
   for(let i=0;i<rows.length;i++){
     const row=rows[i],email=row.email.trim().toLowerCase()
-    const {data:invited,error:inviteError}=await admin.auth.admin.inviteUserByEmail(email,{data:{full_name:row.fullName}})
-    if(inviteError||!invited.user){results.push({row:i+1,email,ok:false,error:'Invitation could not be sent. Check that the email is not already registered.'});continue}
+    const redirectTo=request.headers.get('origin')??Deno.env.get('APP_ORIGIN')??undefined
+    const {data:invited,error:inviteError}=await admin.auth.admin.inviteUserByEmail(email,{data:{full_name:row.fullName},...(redirectTo?{redirectTo}:{})})
+    if(inviteError||!invited.user){
+      const code=String((inviteError as any)?.code??'').toLowerCase()
+      const message=String(inviteError?.message??'')
+      const alreadyExists=['email_exists','user_already_exists','identity_already_exists'].includes(code)||/already (registered|exists)/i.test(message)
+      const error=alreadyExists?'This email already has a Supabase Auth account. Use its existing profile or invite a different address.':inviteError?.status===429?'Supabase email rate limit reached. Wait before sending another invitation.':`Supabase could not send the invitation${message?`: ${message}`:'. Check the Auth email/SMTP configuration.'}`
+      results.push({row:i+1,email,ok:false,error});continue
+    }
     const {error:profileError}=await admin.from('profiles').insert({id:invited.user.id,role:row.role,full_name:row.fullName.trim(),institutional_email:email,usn:row.role==='student'?row.usn?.trim().toUpperCase()??null:null,branch_id:row.branchId??null,semester:row.semester??null,academic_year:row.academicYear??null})
     if(profileError){await admin.auth.admin.deleteUser(invited.user.id);results.push({row:i+1,email,ok:false,error:'Profile could not be created. No account was kept.'});continue}
     if(row.courseIds?.length){const {error:enrollmentError}=await admin.from('student_courses').insert(row.courseIds.map((course_id)=>({student_id:invited.user!.id,course_id})));if(enrollmentError){await admin.from('profiles').delete().eq('id',invited.user.id);await admin.auth.admin.deleteUser(invited.user.id);results.push({row:i+1,email,ok:false,error:'Course enrollment failed. No account was kept.'});continue}}
