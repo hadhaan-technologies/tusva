@@ -149,3 +149,8 @@ vite.config.ts.timestamp-*
 .turbo
 
 .supabase/
+
+# Local agent tooling
+.agents/
+.aider-desk/
+skills-lock.json
