@@ -1,0 +1,17 @@
+[project]
+project_id = "tusva-examination-platform"
+
+[functions.register-question-media]
+verify_jwt = true
+
+[functions.exam-attempt]
+verify_jwt = true
+
+[functions.faculty-results]
+verify_jwt = true
+
+[functions.admin-accounts]
+verify_jwt = true
+
+[functions.complete-signup]
+verify_jwt = true

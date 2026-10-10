@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem in TUSVA.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please do not include passwords, OTPs, student records, or private exam content.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options: [Authentication, Student portal, Faculty portal, Admin portal, Exam delivery, Results and reports, Image upload, Deployment]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser/device, deployed URL or commit, and role (never include credentials).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: 1. Sign in as… 2. Open… 3. Select…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Safe evidence
+      description: Redacted screenshots, browser console error, or request correlation ID. Remove names, emails, USNs and exam answers.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checks
+      options:
+        - label: I checked for an existing issue and removed sensitive information.
+          required: true
