@@ -596,7 +596,7 @@ function Landing({
                 <span>T</span> TUSVA
               </span>
               <span className="preview-user">
-                <i /> Ananya R.
+                <i /> John Doe
               </span>
             </div>
             <div className="preview-body">
@@ -606,7 +606,7 @@ function Landing({
               <h3>
                 Good morning,
                 <br />
-                Ananya
+                John.
               </h3>
               <p>Your semester is right on track.</p>
               <div className="preview-stats">
