@@ -106,6 +106,44 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      
+
+      - name: Diagnose Cloudflare authentication
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -u
+
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is empty"
+            exit 1
+          fi
+
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is empty"
+            exit 1
+          fi
+
+          echo "=== 1. Verify API token ==="
+          curl -sS \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify \
+            -o /tmp/cf-token.json \
+            -w "HTTP status: %{http_code}\n"
+
+          jq '{success, errors, status: .result.status}' /tmp/cf-token.json
+
+          echo "=== 2. Check tusva Pages project access ==="
+          curl -sS \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/tusva" \
+            -o /tmp/cf-pages.json \
+            -w "HTTP status: %{http_code}\n"
+
+          jq '{success, errors, project_name: .result.name}' /tmp/cf-pages.json
+
 
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v4
